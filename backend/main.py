@@ -20,17 +20,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load models
-try:
-    with open('models/random_forest.pkl', 'rb') as f:
-        rf_model = pickle.load(f)
-    with open('models/svc.pkl', 'rb') as f:
-        svc_model = pickle.load(f)
-    print("Models loaded successfully")
-except Exception as e:
-    print(f"Error loading models: {e}")
-    rf_model = None
-    svc_model = None
+# Helper function to load model
+def load_model(path, name):
+    try:
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+        print(f"Successfully loaded {name}")
+        return model
+    except Exception as e:
+        error_msg = f"Error loading {name} from {path}: {str(e)}"
+        print(error_msg)
+        with open("model_errors.log", "a") as log_file:
+            log_file.write(error_msg + "\n")
+        return None
+
+# Load models individually
+rf_model = load_model('models/RF.pkl', 'Random Forest')
+cnn = load_model('models/cnn.pkl', 'CNN')
+decision = load_model('models/decision.pkl', 'Decision Tree')
+ensemble = load_model('models/ensemble.pkl', 'Ensemble')
+naive = load_model('models/nb.pkl', 'Naive Bayes')
+log_reg = load_model('models/log_reg.pkl', 'Logistic Regression')
+svc_model = load_model('models/SVC.pkl', 'SVC')
 
 
 def extract_hrv_features(ecg_signal: np.ndarray, sampling_rate: int = 700) -> Dict:
@@ -85,15 +96,25 @@ def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
     
     Args:
         features: Dictionary of HRV features
-        model_type: "random_forest" or "svc"
+        model_type: One of "random_forest", "svc", "cnn", "decision_tree", "ensemble", "logistic_regression", "naive_bayes"
     
     Returns:
         Dictionary with prediction and probability
     """
-    model = rf_model if model_type == "random_forest" else svc_model
+    model_map = {
+        "random_forest": rf_model,
+        "svc": svc_model,
+        "cnn": cnn,
+        "decision_tree": decision,
+        "ensemble": ensemble,
+        "logistic_regression": log_reg,
+        "naive_bayes": naive
+    }
+    
+    model = model_map.get(model_type)
     
     if model is None:
-        raise ValueError(f"Model {model_type} not loaded")
+        raise ValueError(f"Model {model_type} not loaded or invalid model type")
     
     # Get expected feature names from the model
     if hasattr(model, 'feature_names_in_'):
@@ -123,6 +144,7 @@ def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
     prediction = model.predict(feature_df)[0]
     
     # Get probability if available
+    prob_dict = None
     if hasattr(model, 'predict_proba'):
         try:
             probability = model.predict_proba(feature_df)[0]
@@ -136,11 +158,11 @@ def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
     elif hasattr(model, 'decision_function'):
         # For SVC without probability, use decision function
         try:
-            decision = model.decision_function(feature_df)[0]
+            decision_val = model.decision_function(feature_df)[0]
             # Convert decision function to probability-like scores
             # Using sigmoid function
             import math
-            prob_stress = 1 / (1 + math.exp(-decision))
+            prob_stress = 1 / (1 + math.exp(-decision_val))
             prob_no_stress = 1 - prob_stress
             prob_dict = {
                 "no_stress": float(prob_no_stress),
@@ -149,8 +171,6 @@ def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
         except Exception as e:
             print(f"Could not get decision function: {e}")
             prob_dict = None
-    else:
-        prob_dict = None
     
     return {
         "prediction": int(prediction),
@@ -175,18 +195,23 @@ def read_root():
 def health_check():
     model_features = {}
     
-    # Try to get feature names from models
-    if rf_model is not None and hasattr(rf_model, 'feature_names_in_'):
-        model_features['random_forest'] = rf_model.feature_names_in_.tolist()
+    models = [rf_model, svc_model, cnn, decision, ensemble, log_reg, naive]
+    model_names = ["random_forest", "svc", "cnn", "decision_tree", "ensemble", "logistic_regression", "naive_bayes"]
     
-    if svc_model is not None and hasattr(svc_model, 'feature_names_in_'):
-        model_features['svc'] = svc_model.feature_names_in_.tolist()
+    for model, name in zip(models, model_names):
+        if model is not None and hasattr(model, 'feature_names_in_'):
+            model_features[name] = model.feature_names_in_.tolist()
     
     return {
         "status": "healthy",
         "models_loaded": {
             "random_forest": rf_model is not None,
-            "svc": svc_model is not None
+            "svc": svc_model is not None,
+            "cnn": cnn is not None,
+            "decision_tree": decision is not None,
+            "ensemble": ensemble is not None,
+            "logistic_regression": log_reg is not None,
+            "naive_bayes": naive is not None
         },
         "expected_features": model_features
     }
@@ -227,6 +252,25 @@ async def predict(
             # Fallback to first column if ECG column not found
             ecg_signal = df.iloc[:, 0].values
         
+        # Extract Actual Label if present
+        actual_label = None
+        actual_value = None
+        if 'Label' in df.columns:
+            try:
+                # Get most frequent label (mode)
+                mode_label = df['Label'].mode()[0]
+                actual_value = int(mode_label)
+                actual_label = "Stress" if actual_value == 1 else "No Stress"
+            except Exception as e:
+                print(f"Error extracting label: {e}")
+        elif 'label' in df.columns:
+            try:
+                mode_label = df['label'].mode()[0]
+                actual_value = int(mode_label)
+                actual_label = "Stress" if actual_value == 1 else "No Stress"
+            except Exception as e:
+                print(f"Error extracting label: {e}")
+
         # Extract HRV features
         hrv_features = extract_hrv_features(ecg_signal, sampling_rate)
         
@@ -238,6 +282,10 @@ async def predict(
             "success": True,
             "features": hrv_features,
             "prediction": prediction_result,
+            "actual_result": {
+                "label": actual_label,
+                "value": actual_value
+            },
             "model_used": model_type,
             "signal_info": {
                 "length": len(ecg_signal),
