@@ -140,43 +140,116 @@ def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
         # If model doesn't have feature_names_in_, use all features
         feature_df = pd.DataFrame([features])
     
-    # Make prediction
-    prediction = model.predict(feature_df)[0]
-    
-    # Get probability if available
-    prob_dict = None
-    if hasattr(model, 'predict_proba'):
+    # Special handling for CNN
+    if model_type == "cnn":
+        # Reshape for CNN: (batch_size, time_steps, features) -> (1, 1, 19)
+        input_data = feature_df.values.reshape(1, 1, -1)
         try:
-            probability = model.predict_proba(feature_df)[0]
+            # Keras predict returns probabilities
+            prediction_raw = model.predict(input_data, verbose=0)
+            # Assuming output is [prob_no_stress, prob_stress] or [prob_stress]
+            if prediction_raw.shape[1] == 1:
+                prob_stress = float(prediction_raw[0][0])
+                prob_no_stress = 1.0 - prob_stress
+                prediction = 1 if prob_stress > 0.5 else 0
+            else:
+                prob_no_stress = float(prediction_raw[0][0])
+                prob_stress = float(prediction_raw[0][1])
+                prediction = np.argmax(prediction_raw[0])
+            
             prob_dict = {
-                "no_stress": float(probability[0]),
-                "stress": float(probability[1])
+                "no_stress": prob_no_stress,
+                "stress": prob_stress
             }
         except Exception as e:
-            print(f"Could not get probabilities: {e}")
-            prob_dict = None
-    elif hasattr(model, 'decision_function'):
-        # For SVC without probability, use decision function
+            print(f"CNN prediction error: {e}")
+            raise e
+
+    # Special handling for Ensemble
+    elif model_type == "ensemble":
+        # Ensemble expects predictions from 5 base models
+        # User specified order: Random Forest, Logistic Regression, Decision Tree, SVC, Naive Bayes
+        base_models = [rf_model, log_reg, decision, svc_model, naive]
+        base_names = ["random_forest", "logistic_regression", "decision_tree", "svc", "naive_bayes"]
+        
+        base_preds = []
+        for base_model, name in zip(base_models, base_names):
+            if base_model is None:
+                print(f"Warning: Base model {name} for ensemble is missing")
+                base_preds.append(0.0)
+                continue
+                
+            # Get probability of stress (class 1)
+            try:
+                if hasattr(base_model, 'predict_proba'):
+                    prob = base_model.predict_proba(feature_df)[0][1]
+                elif hasattr(base_model, 'decision_function'):
+                    dec = base_model.decision_function(feature_df)[0]
+                    import math
+                    prob = 1 / (1 + math.exp(-dec))
+                else:
+                    pred = base_model.predict(feature_df)[0]
+                    prob = float(pred)
+                base_preds.append(prob)
+            except Exception as e:
+                print(f"Error getting prediction from {name}: {e}")
+                base_preds.append(0.0)
+        
+        # Create input for ensemble (1 sample, 5 features)
+        ensemble_input = pd.DataFrame([base_preds])
+        
         try:
-            decision_val = model.decision_function(feature_df)[0]
-            # Convert decision function to probability-like scores
-            # Using sigmoid function
-            import math
-            prob_stress = 1 / (1 + math.exp(-decision_val))
-            prob_no_stress = 1 - prob_stress
-            prob_dict = {
-                "no_stress": float(prob_no_stress),
-                "stress": float(prob_stress)
-            }
-        except Exception as e:
-            print(f"Could not get decision function: {e}")
+            prediction = model.predict(ensemble_input)[0]
+            
             prob_dict = None
+            if hasattr(model, 'predict_proba'):
+                probability = model.predict_proba(ensemble_input)[0]
+                prob_dict = {
+                    "no_stress": float(probability[0]),
+                    "stress": float(probability[1])
+                }
+        except Exception as e:
+            print(f"Ensemble prediction error: {e}")
+            raise e
+
+    else:
+        # Standard models (RF, SVC, etc.)
+        prediction = model.predict(feature_df)[0]
+        
+        # Get probability if available
+        prob_dict = None
+        if hasattr(model, 'predict_proba'):
+            try:
+                probability = model.predict_proba(feature_df)[0]
+                prob_dict = {
+                    "no_stress": float(probability[0]),
+                    "stress": float(probability[1])
+                }
+            except Exception as e:
+                print(f"Could not get probabilities: {e}")
+                prob_dict = None
+        elif hasattr(model, 'decision_function'):
+            # For SVC without probability, use decision function
+            try:
+                decision_val = model.decision_function(feature_df)[0]
+                # Convert decision function to probability-like scores
+                # Using sigmoid function
+                import math
+                prob_stress = 1 / (1 + math.exp(-decision_val))
+                prob_no_stress = 1 - prob_stress
+                prob_dict = {
+                    "no_stress": float(prob_no_stress),
+                    "stress": float(prob_stress)
+                }
+            except Exception as e:
+                print(f"Could not get decision function: {e}")
+                prob_dict = None
     
     return {
         "prediction": int(prediction),
         "prediction_label": "Stress" if prediction == 1 else "No Stress",
         "probabilities": prob_dict,
-        "probability_method": "predict_proba" if hasattr(model, 'predict_proba') else ("decision_function" if hasattr(model, 'decision_function') else "none")
+        "probability_method": "predict_proba" if prob_dict else "none"
     }
 
 
