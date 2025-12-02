@@ -31,6 +31,10 @@ interface PredictionResult {
   success: boolean;
   features: HRVFeatures;
   prediction: Prediction;
+  actual_result?: {
+    label: string | null;
+    value: number | null;
+  };
   model_used: string;
   signal_info: {
     length: number;
@@ -45,7 +49,7 @@ export default function ECGAnalysis() {
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string>('');
   const [ecgData, setEcgData] = useState<any[]>([]);
-  const [selectedModel, setSelectedModel] = useState<'random_forest' | 'svc'>('random_forest');
+  const [selectedModel, setSelectedModel] = useState<'random_forest' | 'svc' | 'cnn' | 'decision_tree' | 'ensemble' | 'logistic_regression' | 'naive_bayes'>('random_forest');
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -119,6 +123,19 @@ export default function ECGAnalysis() {
     }));
   };
 
+  const getModelDisplayName = (modelKey: string) => {
+    const names: { [key: string]: string } = {
+      'random_forest': 'Random Forest',
+      'svc': 'Support Vector Classifier',
+      'cnn': '1D CNN',
+      'decision_tree': 'Decision Tree',
+      'ensemble': 'Stacking Ensemble',
+      'logistic_regression': 'Logistic Regression',
+      'naive_bayes': 'Naive Bayes'
+    };
+    return names[modelKey] || modelKey;
+  };
+
   return (
     <div className="min-h-screen bg-black text-gray-100">
       <div className="max-w-7xl mx-auto p-6 lg:p-8">
@@ -142,11 +159,16 @@ export default function ECGAnalysis() {
               </label>
               <select
                 value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value as 'random_forest' | 'svc')}
+                onChange={(e) => setSelectedModel(e.target.value as any)}
                 className="w-full bg-black border border-zinc-700 text-white rounded-md px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
               >
                 <option value="random_forest">Random Forest</option>
                 <option value="svc">Support Vector Classifier</option>
+                <option value="cnn">1D CNN</option>
+                <option value="decision_tree">Decision Tree</option>
+                <option value="ensemble">Stacking Ensemble</option>
+                <option value="logistic_regression">Logistic Regression</option>
+                <option value="naive_bayes">Naive Bayes</option>
               </select>
             </div>
 
@@ -250,52 +272,90 @@ export default function ECGAnalysis() {
             <div className="bg-black border border-zinc-800 rounded-lg p-6 mb-6">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-medium text-white">
-                  Prediction Result
+                  Analysis Result
                 </h2>
                 <span className="text-xs text-gray-500 bg-zinc-800 px-3 py-1 rounded-full">
-                  {result.model_used === 'random_forest' ? 'Random Forest' : 'Support Vector Classifier'}
+                  {getModelDisplayName(result.model_used)}
                 </span>
               </div>
 
-              <div className="text-center py-8">
-                <div className={`text-5xl font-semibold mb-4 ${result.prediction.prediction === 1 ? 'text-red-500' : 'text-green-500'
-                  }`}>
-                  {result.prediction.prediction_label}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
+                {/* Predicted */}
+                <div className="text-center border-r border-zinc-800 pr-4">
+                  <p className="text-sm text-gray-400 mb-2">Predicted Result</p>
+                  <div className={`text-4xl font-semibold mb-4 ${result.prediction.prediction === 1 ? 'text-red-500' : 'text-green-500'
+                    }`}>
+                    {result.prediction.prediction_label}
+                  </div>
+
+                  {result.prediction.probabilities && (
+                    <div className="max-w-xs mx-auto space-y-3 mt-6">
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-500">No Stress</span>
+                          <span className="text-gray-300">
+                            {(result.prediction.probabilities.no_stress * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-zinc-800 rounded-full h-1.5">
+                          <div
+                            className="bg-green-500 h-1.5 rounded-full transition-all duration-500"
+                            style={{ width: `${result.prediction.probabilities.no_stress * 100}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-500">Stress</span>
+                          <span className="text-gray-300">
+                            {(result.prediction.probabilities.stress * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-zinc-800 rounded-full h-1.5">
+                          <div
+                            className="bg-red-500 h-1.5 rounded-full transition-all duration-500"
+                            style={{ width: `${result.prediction.probabilities.stress * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {result.prediction.probabilities && (
-                  <div className="max-w-md mx-auto space-y-4 mt-8">
-                    <div>
-                      <div className="flex justify-between text-sm mb-2">
-                        <span className="text-gray-400">No Stress</span>
-                        <span className="text-white font-medium">
-                          {(result.prediction.probabilities.no_stress * 100).toFixed(1)}%
-                        </span>
+                {/* Actual */}
+                <div className="text-center pl-4 flex flex-col justify-center">
+                  <p className="text-sm text-gray-400 mb-2">Actual Result</p>
+                  {result.actual_result?.label ? (
+                    <>
+                      <div className={`text-4xl font-semibold mb-2 ${result.actual_result.value === 1 ? 'text-red-500' : 'text-green-500'
+                        }`}>
+                        {result.actual_result.label}
                       </div>
-                      <div className="w-full bg-zinc-800 rounded-full h-2">
-                        <div
-                          className="bg-green-500 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${result.prediction.probabilities.no_stress * 100}%` }}
-                        />
+                      <div className="mt-4">
+                        {result.actual_result.value === result.prediction.prediction ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-950/30 text-green-400 text-sm border border-green-900/50">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Correct Prediction
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-950/30 text-red-400 text-sm border border-red-900/50">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Incorrect Prediction
+                          </span>
+                        )}
                       </div>
+                    </>
+                  ) : (
+                    <div className="text-gray-500 italic">
+                      Not available in CSV
                     </div>
-
-                    <div>
-                      <div className="flex justify-between text-sm mb-2">
-                        <span className="text-gray-400">Stress</span>
-                        <span className="text-white font-medium">
-                          {(result.prediction.probabilities.stress * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-zinc-800 rounded-full h-2">
-                        <div
-                          className="bg-red-500 h-2 rounded-full transition-all duration-500"
-                          style={{ width: `${result.prediction.probabilities.stress * 100}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
 
