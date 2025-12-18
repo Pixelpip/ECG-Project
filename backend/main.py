@@ -45,16 +45,7 @@ svc_model = load_model('models/SVC.pkl', 'SVC')
 
 
 def extract_hrv_features(ecg_signal: np.ndarray, sampling_rate: int = 700) -> Dict:
-    """
-    Extract time-domain HRV features using NeuroKit2
-    
-    Args:
-        ecg_signal: ECG signal array
-        sampling_rate: Sampling rate of the ECG signal
-    
-    Returns:
-        Dictionary containing HRV time-domain features matching model requirements
-    """
+   
     try:
         # Clean the ECG signal
         ecg_cleaned = nk.ecg_clean(ecg_signal, sampling_rate=sampling_rate)
@@ -91,16 +82,7 @@ def extract_hrv_features(ecg_signal: np.ndarray, sampling_rate: int = 700) -> Di
 
 
 def predict_stress(features: Dict, model_type: str = "random_forest") -> Dict:
-    """
-    Predict stress class using the specified model
-    
-    Args:
-        features: Dictionary of HRV features
-        model_type: One of "random_forest", "svc", "cnn", "decision_tree", "ensemble", "logistic_regression", "naive_bayes"
-    
-    Returns:
-        Dictionary with prediction and probability
-    """
+  
     model_map = {
         "random_forest": rf_model,
         "svc": svc_model,
@@ -296,17 +278,7 @@ async def predict(
     model_type: str = Form("random_forest"),
     sampling_rate: int = Form(700)
 ):
-    """
-    Process ECG CSV file and predict stress level
-    
-    Args:
-        file: CSV file containing ECG signal data
-        model_type: Model to use ("random_forest" or "svc")
-        sampling_rate: Sampling rate of ECG signal (default: 700 Hz)
-    
-    Returns:
-        JSON with features, prediction, and probabilities
-    """
+   
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="File must be a CSV")
     
